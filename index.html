@@ -865,6 +865,11 @@
       </div>
 
       <div class="form-group">
+        <label for="txColumn">Transaction Number Column</label>
+        <select id="txColumn"><option value="">— select column —</option></select>
+      </div>
+
+      <div class="form-group">
         <label for="separator">Separator Character</label>
         <input type="text" id="separator" value="/" maxlength="5" placeholder="/" />
       </div>
@@ -947,8 +952,9 @@
               <th>Customer</th>
               <th>File Name</th>
               <th>Rows</th>
+              <th>Transactions</th>
+              <th>SO Numbers</th>
               <th>Date Range</th>
-              <th>Unique Transactions</th>
               <th>Download</th>
             </tr>
           </thead>
@@ -1158,8 +1164,9 @@ function handleFile(file) {
 function populateColumnDropdowns(headers) {
   const soSel   = document.getElementById('soColumn');
   const dateSel = document.getElementById('dateColumn');
+  const txSel   = document.getElementById('txColumn');
 
-  [soSel, dateSel].forEach(sel => {
+  [soSel, dateSel, txSel].forEach(sel => {
     sel.innerHTML = '<option value="">— select column —</option>';
     headers.forEach(h => {
       const opt = document.createElement('option');
@@ -1174,6 +1181,12 @@ function populateColumnDropdowns(headers) {
 
   const dateAuto = headers.find(h => /date/i.test(h));
   if (dateAuto) dateSel.value = dateAuto;
+
+  // Prefer "Transaction Number" / "Transaction No"; fall back to any "transaction" header
+  // that isn't the date column.
+  const txAuto = headers.find(h => /transaction.*(number|no\.?|#|id)/i.test(h))
+              || headers.find(h => /transaction/i.test(h) && h !== dateAuto);
+  if (txAuto) txSel.value = txAuto;
 }
 
 function resetAll() {
@@ -1187,6 +1200,7 @@ function resetAll() {
   document.getElementById('splitBtn').disabled = true;
   document.getElementById('soColumn').innerHTML   = '<option value="">— select column —</option>';
   document.getElementById('dateColumn').innerHTML = '<option value="">— select column —</option>';
+  document.getElementById('txColumn').innerHTML   = '<option value="">— select column —</option>';
   document.getElementById('resultsSection').style.display = 'none';
 
   const statsBar = document.getElementById('statsBar');
@@ -1228,6 +1242,7 @@ async function runSplit() {
 
   const soCol   = document.getElementById('soColumn').value;
   const dateCol = document.getElementById('dateColumn').value;
+  const txCol   = document.getElementById('txColumn').value;
   const sep     = document.getElementById('separator').value || '/';
   const format  = document.querySelector('input[name="format"]:checked').value;
 
@@ -1245,13 +1260,17 @@ async function runSplit() {
   document.getElementById('resultsSection').style.display = 'block';
   const tbody = document.getElementById('resultsBody');
   tbody.innerHTML = [1,2,3,4].map(() =>
-    `<tr><td colspan="7"><div class="skeleton-row"></div></td></tr>`
+    `<tr><td colspan="8"><div class="skeleton-row"></div></td></tr>`
   ).join('');
 
   // yield to browser
   await delay(20);
 
-  // ── Group rows by customer ───────────────────────────────────────────────
+  // ── Group rows by customer prefix only ───────────────────────────────────
+  //    The customer prefix is everything before the configured separator in
+  //    the Sales Order Number column (e.g. "SALAMJED/73395" → "SALAMJED").
+  //    All rows sharing a prefix land in a single output file, regardless of
+  //    transaction number or SO suffix.
   const groups = {};
   rows.forEach(row => {
     const customer = extractCustomer(row[soCol], sep) || 'UNKNOWN';
@@ -1263,16 +1282,28 @@ async function runSplit() {
   await delay(20);
 
   const customers = Object.keys(groups).sort();
+
   splitResults = customers.map(c => {
     const cRows   = groups[c];
     const dr      = dateRange(cRows, dateCol);
-    const txField = parsedData.meta.fields.find(f => /transaction/i.test(f));
-    const uniqueTx = txField
-      ? new Set(cRows.map(r => r[txField])).size
+    const uniqueTx = txCol
+      ? new Set(cRows.map(r => String(r[txCol] ?? '').trim()).filter(v => v !== '')).size
       : 0;
-    const ext  = format === 'xlsx' ? 'xlsx' : 'csv';
+    const uniqueSO = new Set(
+      cRows.map(r => String(r[soCol] ?? '').trim()).filter(v => v !== '')
+    ).size;
+    const ext   = format === 'xlsx' ? 'xlsx' : 'csv';
     const fname = `${sanitizeFilename(c)}.${ext}`;
-    return { customer: c, rows: cRows, headers, dateRange: dr, uniqueTx, fileName: fname, format };
+    return {
+      customer: c,
+      rows: cRows,
+      headers,
+      dateRange: dr,
+      uniqueTx,
+      uniqueSO,
+      fileName: fname,
+      format
+    };
   });
 
   setProgress(60, 'Rendering table…');
@@ -1284,7 +1315,7 @@ async function runSplit() {
   setProgress(80, 'Computing stats…');
   await delay(20);
 
-  renderStats(rows, customers, dateCol, parsedData.meta.fields);
+  renderStats(rows, customers, dateCol, txCol, parsedData.meta.fields);
 
   setProgress(100, 'Done!');
   await delay(300);
@@ -1324,8 +1355,9 @@ function renderTable(results) {
       </td>
       <td style="font-family:monospace;font-size:.8rem;color:var(--muted)">${escHtml(r.fileName)}</td>
       <td><span class="rows-badge">${r.rows.length.toLocaleString()}</span></td>
-      <td style="font-size:.82rem;color:var(--muted)">${escHtml(r.dateRange)}</td>
       <td style="text-align:center">${r.uniqueTx ?? '—'}</td>
+      <td style="text-align:center">${r.uniqueSO ?? '—'}</td>
+      <td style="font-size:.82rem;color:var(--muted)">${escHtml(r.dateRange)}</td>
       <td>
         <button class="dl-btn" data-idx="${splitResults.indexOf(r)}">
           ⬇ Download
@@ -1351,11 +1383,15 @@ function escHtml(s) {
 // ════════════════════════════════════════════════════════════════════════════
 //  Stats Bar
 // ════════════════════════════════════════════════════════════════════════════
-function renderStats(rows, customers, dateCol, fields) {
+function renderStats(rows, customers, dateCol, txCol, fields) {
   const bar = document.getElementById('statsBar');
 
   const dr  = dateRange(rows, dateCol);
-  const txField = fields && fields.find(f => /transaction/i.test(f));
+  // Prefer the user-selected Transaction column; fall back to a sensible auto-detect
+  // (avoiding the date column) only if no explicit selection was made.
+  const txField = txCol
+    || (fields && (fields.find(f => /transaction.*(number|no\.?|#|id)/i.test(f))
+                || fields.find(f => /transaction/i.test(f) && f !== dateCol)));
   const uniqTx  = txField ? new Set(rows.map(r => r[txField])).size : 0;
 
   const stats = [
@@ -1412,8 +1448,9 @@ function downloadXlsx(r) {
     const sumData = splitResults.map(s => ({
       Customer: s.customer,
       Rows: s.rows.length,
+      Transactions: s.uniqueTx,
+      'SO Numbers': s.uniqueSO,
       'Date Range': s.dateRange,
-      'Unique Transactions': s.uniqueTx,
       'File Name': s.fileName
     }));
     const sumSheet = XLSX.utils.json_to_sheet(sumData);
@@ -1461,13 +1498,14 @@ document.getElementById('downloadAllBtn').addEventListener('click', async functi
 document.getElementById('exportSummaryBtn').addEventListener('click', function () {
   if (!splitResults.length) { toast('Nothing to export', 'error'); return; }
 
-  const headers = ['Customer', 'File Name', 'Rows', 'Date Range', 'Unique Transactions'];
+  const headers = ['Customer', 'File Name', 'Rows', 'Transactions', 'SO Numbers', 'Date Range'];
   const rows = splitResults.map(r => ({
     Customer: r.customer,
     'File Name': r.fileName,
     Rows: r.rows.length,
-    'Date Range': r.dateRange,
-    'Unique Transactions': r.uniqueTx
+    Transactions: r.uniqueTx,
+    'SO Numbers': r.uniqueSO,
+    'Date Range': r.dateRange
   }));
   downloadBlob(toCSVBlob(rows, headers), 'summary.csv');
   toast('Summary CSV exported', 'success', 2000);
