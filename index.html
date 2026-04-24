@@ -865,6 +865,11 @@
       </div>
 
       <div class="form-group">
+        <label for="txColumn">Transaction Number Column</label>
+        <select id="txColumn"><option value="">— select column —</option></select>
+      </div>
+
+      <div class="form-group">
         <label for="separator">Separator Character</label>
         <input type="text" id="separator" value="/" maxlength="5" placeholder="/" />
       </div>
@@ -945,6 +950,7 @@
             <tr>
               <th>#</th>
               <th>Customer</th>
+              <th>Transaction #</th>
               <th>File Name</th>
               <th>Rows</th>
               <th>Date Range</th>
@@ -1158,8 +1164,9 @@ function handleFile(file) {
 function populateColumnDropdowns(headers) {
   const soSel   = document.getElementById('soColumn');
   const dateSel = document.getElementById('dateColumn');
+  const txSel   = document.getElementById('txColumn');
 
-  [soSel, dateSel].forEach(sel => {
+  [soSel, dateSel, txSel].forEach(sel => {
     sel.innerHTML = '<option value="">— select column —</option>';
     headers.forEach(h => {
       const opt = document.createElement('option');
@@ -1174,6 +1181,12 @@ function populateColumnDropdowns(headers) {
 
   const dateAuto = headers.find(h => /date/i.test(h));
   if (dateAuto) dateSel.value = dateAuto;
+
+  // Prefer "Transaction Number" / "Transaction No"; fall back to any "transaction" header
+  // that isn't the date column.
+  const txAuto = headers.find(h => /transaction.*(number|no\.?|#|id)/i.test(h))
+              || headers.find(h => /transaction/i.test(h) && h !== dateAuto);
+  if (txAuto) txSel.value = txAuto;
 }
 
 function resetAll() {
@@ -1187,6 +1200,7 @@ function resetAll() {
   document.getElementById('splitBtn').disabled = true;
   document.getElementById('soColumn').innerHTML   = '<option value="">— select column —</option>';
   document.getElementById('dateColumn').innerHTML = '<option value="">— select column —</option>';
+  document.getElementById('txColumn').innerHTML   = '<option value="">— select column —</option>';
   document.getElementById('resultsSection').style.display = 'none';
 
   const statsBar = document.getElementById('statsBar');
@@ -1228,6 +1242,7 @@ async function runSplit() {
 
   const soCol   = document.getElementById('soColumn').value;
   const dateCol = document.getElementById('dateColumn').value;
+  const txCol   = document.getElementById('txColumn').value;
   const sep     = document.getElementById('separator').value || '/';
   const format  = document.querySelector('input[name="format"]:checked').value;
 
@@ -1245,34 +1260,61 @@ async function runSplit() {
   document.getElementById('resultsSection').style.display = 'block';
   const tbody = document.getElementById('resultsBody');
   tbody.innerHTML = [1,2,3,4].map(() =>
-    `<tr><td colspan="7"><div class="skeleton-row"></div></td></tr>`
+    `<tr><td colspan="8"><div class="skeleton-row"></div></td></tr>`
   ).join('');
 
   // yield to browser
   await delay(20);
 
-  // ── Group rows by customer ───────────────────────────────────────────────
+  // ── Group rows by the original (Date + Transaction Number + Sales Order Number)
+  //    composite key — matches the original Python script's splitting logic so
+  //    each unique combination becomes its own output file.
   const groups = {};
   rows.forEach(row => {
     const customer = extractCustomer(row[soCol], sep) || 'UNKNOWN';
-    if (!groups[customer]) groups[customer] = [];
-    groups[customer].push(row);
+    const dateVal  = dateCol ? String(row[dateCol] ?? '').trim() : '';
+    const txVal    = txCol   ? String(row[txCol]   ?? '').trim() : '';
+    const soVal    = String(row[soCol] ?? '').trim();
+    const key      = `${dateVal}||${txVal}||${soVal}`;
+    if (!groups[key]) groups[key] = { customer, dateVal, txVal, soVal, rows: [] };
+    groups[key].rows.push(row);
   });
 
   setProgress(30, 'Building results…');
   await delay(20);
 
-  const customers = Object.keys(groups).sort();
-  splitResults = customers.map(c => {
-    const cRows   = groups[c];
-    const dr      = dateRange(cRows, dateCol);
-    const txField = parsedData.meta.fields.find(f => /transaction/i.test(f));
-    const uniqueTx = txField
-      ? new Set(cRows.map(r => r[txField])).size
+  // Sort groups for stable, human-friendly ordering: customer → date → txn → SO
+  const keys = Object.keys(groups).sort((a, b) => {
+    const ga = groups[a], gb = groups[b];
+    return ga.customer.localeCompare(gb.customer)
+        || ga.dateVal.localeCompare(gb.dateVal)
+        || ga.txVal.localeCompare(gb.txVal)
+        || ga.soVal.localeCompare(gb.soVal);
+  });
+  const customers = [...new Set(keys.map(k => groups[k].customer))];
+
+  splitResults = keys.map(k => {
+    const g       = groups[k];
+    const dr      = dateRange(g.rows, dateCol);
+    const uniqueTx = txCol
+      ? new Set(g.rows.map(r => r[txCol])).size
       : 0;
     const ext  = format === 'xlsx' ? 'xlsx' : 'csv';
-    const fname = `${sanitizeFilename(c)}.${ext}`;
-    return { customer: c, rows: cRows, headers, dateRange: dr, uniqueTx, fileName: fname, format };
+    // Build a unique, human-readable file name from the grouping key parts so
+    // each (date, txn, SO) combination ends up in its own file.
+    const parts = [g.customer, g.txVal, g.soVal].filter(Boolean).map(sanitizeFilename);
+    const fname = `${parts.join('_')}.${ext}`;
+    return {
+      customer: g.customer,
+      txNumber: g.txVal,
+      soNumber: g.soVal,
+      rows: g.rows,
+      headers,
+      dateRange: dr,
+      uniqueTx,
+      fileName: fname,
+      format
+    };
   });
 
   setProgress(60, 'Rendering table…');
@@ -1284,7 +1326,7 @@ async function runSplit() {
   setProgress(80, 'Computing stats…');
   await delay(20);
 
-  renderStats(rows, customers, dateCol, parsedData.meta.fields);
+  renderStats(rows, customers, dateCol, txCol, parsedData.meta.fields);
 
   setProgress(100, 'Done!');
   await delay(300);
@@ -1295,7 +1337,7 @@ async function runSplit() {
 
   // Scroll to results
   document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  toast(`Split into ${customers.length} customer file(s)`, 'success');
+  toast(`Split into ${splitResults.length} file(s) across ${customers.length} customer(s)`, 'success');
 }
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -1322,6 +1364,7 @@ function renderTable(results) {
           👤 ${escHtml(r.customer)}
         </span>
       </td>
+      <td style="font-family:monospace;font-size:.8rem">${escHtml(r.txNumber || '—')}</td>
       <td style="font-family:monospace;font-size:.8rem;color:var(--muted)">${escHtml(r.fileName)}</td>
       <td><span class="rows-badge">${r.rows.length.toLocaleString()}</span></td>
       <td style="font-size:.82rem;color:var(--muted)">${escHtml(r.dateRange)}</td>
@@ -1351,11 +1394,15 @@ function escHtml(s) {
 // ════════════════════════════════════════════════════════════════════════════
 //  Stats Bar
 // ════════════════════════════════════════════════════════════════════════════
-function renderStats(rows, customers, dateCol, fields) {
+function renderStats(rows, customers, dateCol, txCol, fields) {
   const bar = document.getElementById('statsBar');
 
   const dr  = dateRange(rows, dateCol);
-  const txField = fields && fields.find(f => /transaction/i.test(f));
+  // Prefer the user-selected Transaction column; fall back to a sensible auto-detect
+  // (avoiding the date column) only if no explicit selection was made.
+  const txField = txCol
+    || (fields && (fields.find(f => /transaction.*(number|no\.?|#|id)/i.test(f))
+                || fields.find(f => /transaction/i.test(f) && f !== dateCol)));
   const uniqTx  = txField ? new Set(rows.map(r => r[txField])).size : 0;
 
   const stats = [
@@ -1383,7 +1430,11 @@ function renderStats(rows, customers, dateCol, fields) {
 document.getElementById('searchBar').addEventListener('input', function () {
   const q = this.value.toLowerCase().trim();
   filteredRows = q
-    ? splitResults.filter(r => r.customer.toLowerCase().includes(q))
+    ? splitResults.filter(r =>
+        r.customer.toLowerCase().includes(q)
+        || (r.txNumber || '').toLowerCase().includes(q)
+        || (r.soNumber || '').toLowerCase().includes(q)
+      )
     : [...splitResults];
   renderTable(filteredRows);
 });
@@ -1411,6 +1462,8 @@ function downloadXlsx(r) {
   if (addSummary) {
     const sumData = splitResults.map(s => ({
       Customer: s.customer,
+      'Transaction #': s.txNumber,
+      'Sales Order #': s.soNumber,
       Rows: s.rows.length,
       'Date Range': s.dateRange,
       'Unique Transactions': s.uniqueTx,
@@ -1461,9 +1514,11 @@ document.getElementById('downloadAllBtn').addEventListener('click', async functi
 document.getElementById('exportSummaryBtn').addEventListener('click', function () {
   if (!splitResults.length) { toast('Nothing to export', 'error'); return; }
 
-  const headers = ['Customer', 'File Name', 'Rows', 'Date Range', 'Unique Transactions'];
+  const headers = ['Customer', 'Transaction #', 'Sales Order #', 'File Name', 'Rows', 'Date Range', 'Unique Transactions'];
   const rows = splitResults.map(r => ({
     Customer: r.customer,
+    'Transaction #': r.txNumber,
+    'Sales Order #': r.soNumber,
     'File Name': r.fileName,
     Rows: r.rows.length,
     'Date Range': r.dateRange,
