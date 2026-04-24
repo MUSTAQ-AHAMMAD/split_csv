@@ -1275,7 +1275,7 @@ async function runSplit() {
     const dateVal  = dateCol ? String(row[dateCol] ?? '').trim() : '';
     const txVal    = txCol   ? String(row[txCol]   ?? '').trim() : '';
     const soVal    = String(row[soCol] ?? '').trim();
-    const key      = `${dateVal}||${txVal}||${soVal}`;
+    const key      = `${dateVal}\u0001${txVal}\u0001${soVal}`;
     if (!groups[key]) groups[key] = { customer, dateVal, txVal, soVal, rows: [] };
     groups[key].rows.push(row);
   });
@@ -1293,6 +1293,9 @@ async function runSplit() {
   });
   const customers = [...new Set(keys.map(k => groups[k].customer))];
 
+  // Track used file names so we can disambiguate any that would otherwise
+  // collide (e.g. when a transaction or SO field is empty in the source data).
+  const usedNames = new Set();
   splitResults = keys.map(k => {
     const g       = groups[k];
     const dr      = dateRange(g.rows, dateCol);
@@ -1301,9 +1304,18 @@ async function runSplit() {
       : 0;
     const ext  = format === 'xlsx' ? 'xlsx' : 'csv';
     // Build a unique, human-readable file name from the grouping key parts so
-    // each (date, txn, SO) combination ends up in its own file.
-    const parts = [g.customer, g.txVal, g.soVal].filter(Boolean).map(sanitizeFilename);
-    const fname = `${parts.join('_')}.${ext}`;
+    // each (date, txn, SO) combination ends up in its own file. Empty parts are
+    // preserved (as the sanitizer's "unknown" placeholder) and any remaining
+    // collisions get a numeric suffix.
+    const parts = [g.customer, g.txVal, g.soVal].map(sanitizeFilename);
+    const base  = parts.join('_');
+    let fname = `${base}.${ext}`;
+    if (usedNames.has(fname)) {
+      let i = 2;
+      while (usedNames.has(`${base}_${i}.${ext}`)) i++;
+      fname = `${base}_${i}.${ext}`;
+    }
+    usedNames.add(fname);
     return {
       customer: g.customer,
       txNumber: g.txVal,
