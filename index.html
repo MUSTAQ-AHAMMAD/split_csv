@@ -1,0 +1,1513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CSV Splitter — Split by Customer</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <!-- Libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+  <style>
+    /* ─── Reset & Base ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0a0f1e;
+      --surface:   #111827;
+      --surface2:  #1a2235;
+      --border:    rgba(99,102,241,.25);
+      --accent1:   #6366f1;
+      --accent2:   #06b6d4;
+      --text:      #e2e8f0;
+      --muted:     #64748b;
+      --success:   #10b981;
+      --error:     #ef4444;
+      --warning:   #f59e0b;
+      --radius:    14px;
+      --transition: .25s ease;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    /* ─── Dot-grid background ───────────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        radial-gradient(circle, rgba(99,102,241,.12) 1px, transparent 1px);
+      background-size: 28px 28px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ─── Layout ────────────────────────────────────────────────── */
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 20px 60px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ─── Header ────────────────────────────────────────────────── */
+    header {
+      text-align: center;
+      padding: 52px 20px 36px;
+    }
+
+    header .badge {
+      display: inline-block;
+      background: linear-gradient(135deg, rgba(99,102,241,.2), rgba(6,182,212,.2));
+      border: 1px solid var(--border);
+      border-radius: 50px;
+      padding: 5px 16px;
+      font-size: .75rem;
+      font-weight: 600;
+      letter-spacing: .08em;
+      color: var(--accent2);
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+
+    header h1 {
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      font-weight: 800;
+      background: linear-gradient(90deg, #6366f1, #8b5cf6, #06b6d4, #6366f1);
+      background-size: 300% 100%;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: gradientShift 5s linear infinite;
+      line-height: 1.15;
+    }
+
+    @keyframes gradientShift {
+      0%   { background-position: 0% 50%; }
+      50%  { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+
+    header p {
+      color: var(--muted);
+      margin-top: 12px;
+      font-size: .95rem;
+      max-width: 560px;
+      margin-inline: auto;
+      line-height: 1.6;
+    }
+
+    /* ─── Cards / Glass ─────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      transition: box-shadow var(--transition);
+    }
+
+    .card + .card,
+    .card + section { margin-top: 24px; }
+
+    .card-title {
+      font-size: .8rem;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-title svg { width: 16px; height: 16px; flex-shrink: 0; }
+
+    /* ─── Upload Zone ───────────────────────────────────────────── */
+    #dropZone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 48px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color var(--transition), background var(--transition),
+                  box-shadow var(--transition);
+      position: relative;
+      overflow: hidden;
+    }
+
+    #dropZone:hover, #dropZone.drag-over {
+      border-color: var(--accent1);
+      background: rgba(99,102,241,.06);
+      box-shadow: 0 0 32px rgba(99,102,241,.15);
+    }
+
+    #dropZone.drag-over {
+      border-style: solid;
+      animation: borderPulse .8s ease-in-out infinite alternate;
+    }
+
+    @keyframes borderPulse {
+      from { box-shadow: 0 0 10px rgba(99,102,241,.2); }
+      to   { box-shadow: 0 0 40px rgba(99,102,241,.5); }
+    }
+
+    #dropZone .upload-icon {
+      width: 56px; height: 56px;
+      margin: 0 auto 16px;
+      background: linear-gradient(135deg, var(--accent1), var(--accent2));
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    #dropZone .upload-icon svg { width: 26px; height: 26px; color: #fff; }
+
+    #dropZone h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 6px; }
+    #dropZone p  { color: var(--muted); font-size: .875rem; }
+    #dropZone p span { color: var(--accent1); cursor: pointer; text-decoration: underline; }
+
+    #fileInput { display: none; }
+
+    /* ─── File Info Strip ───────────────────────────────────────── */
+    #fileInfo {
+      display: none;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      padding: 14px 18px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-top: 16px;
+      animation: fadeIn .3s ease;
+    }
+
+    #fileInfo .info-item { display: flex; align-items: center; gap: 6px; font-size: .85rem; }
+    #fileInfo .info-item .label { color: var(--muted); }
+    #fileInfo .info-item .value { font-weight: 600; color: var(--text); }
+
+    #clearBtn {
+      margin-left: auto;
+      background: rgba(239,68,68,.15);
+      color: var(--error);
+      border: 1px solid rgba(239,68,68,.25);
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: .8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background var(--transition), transform var(--transition);
+    }
+
+    #clearBtn:hover { background: rgba(239,68,68,.25); transform: scale(1.04); }
+
+    /* ─── Config Panel ──────────────────────────────────────────── */
+    .config-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 20px;
+    }
+
+    .form-group { display: flex; flex-direction: column; gap: 7px; }
+
+    .form-group label {
+      font-size: .78rem;
+      font-weight: 600;
+      letter-spacing: .06em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .form-group select,
+    .form-group input[type="text"] {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      color: var(--text);
+      padding: 10px 12px;
+      font-size: .9rem;
+      font-family: 'Inter', sans-serif;
+      outline: none;
+      transition: border-color var(--transition), box-shadow var(--transition);
+      appearance: none;
+      -webkit-appearance: none;
+    }
+
+    .form-group select:focus,
+    .form-group input[type="text"]:focus {
+      border-color: var(--accent1);
+      box-shadow: 0 0 0 3px rgba(99,102,241,.2);
+    }
+
+    .form-group select option { background: var(--surface); }
+
+    /* Toggle */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .toggle-label { font-size: .88rem; color: var(--text); font-weight: 500; }
+
+    .toggle {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      flex-shrink: 0;
+    }
+
+    .toggle input { opacity: 0; width: 0; height: 0; }
+
+    .toggle .slider {
+      position: absolute;
+      inset: 0;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 30px;
+      cursor: pointer;
+      transition: background var(--transition);
+    }
+
+    .toggle .slider::before {
+      content: '';
+      position: absolute;
+      width: 16px; height: 16px;
+      left: 3px; top: 50%;
+      transform: translateY(-50%);
+      background: var(--muted);
+      border-radius: 50%;
+      transition: transform var(--transition), background var(--transition);
+    }
+
+    .toggle input:checked + .slider {
+      background: linear-gradient(135deg, var(--accent1), var(--accent2));
+      border-color: transparent;
+    }
+
+    .toggle input:checked + .slider::before {
+      transform: translate(20px, -50%);
+      background: #fff;
+    }
+
+    /* Format segment control */
+    .segment-control {
+      display: flex;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      overflow: hidden;
+    }
+
+    .segment-control label {
+      flex: 1;
+      text-align: center;
+      padding: 10px 12px;
+      cursor: pointer;
+      font-size: .85rem;
+      font-weight: 600;
+      color: var(--muted);
+      transition: background var(--transition), color var(--transition);
+      text-transform: none;
+      letter-spacing: 0;
+    }
+
+    .segment-control input[type="radio"] { display: none; }
+
+    .segment-control input:checked + label {
+      background: linear-gradient(135deg, var(--accent1), var(--accent2));
+      color: #fff;
+    }
+
+    /* ─── Split Button ──────────────────────────────────────────── */
+    #splitBtn {
+      margin-top: 28px;
+      width: 100%;
+      padding: 16px;
+      border: none;
+      border-radius: var(--radius);
+      background: linear-gradient(135deg, var(--accent1), var(--accent2));
+      color: #fff;
+      font-family: 'Inter', sans-serif;
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+      cursor: pointer;
+      transition: opacity var(--transition), transform var(--transition),
+                  box-shadow var(--transition);
+      box-shadow: 0 4px 24px rgba(99,102,241,.35);
+    }
+
+    #splitBtn:hover:not(:disabled) {
+      opacity: .9;
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px rgba(99,102,241,.5);
+    }
+
+    #splitBtn:disabled { opacity: .45; cursor: not-allowed; }
+
+    /* ─── Progress ──────────────────────────────────────────────── */
+    #progressWrap {
+      display: none;
+      margin-top: 20px;
+      animation: fadeIn .3s ease;
+    }
+
+    .progress-label {
+      font-size: .82rem;
+      color: var(--muted);
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .progress-track {
+      height: 8px;
+      background: var(--surface2);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent1), var(--accent2));
+      border-radius: 99px;
+      transition: width .4s ease;
+    }
+
+    /* ─── Skeleton ──────────────────────────────────────────────── */
+    .skeleton-row {
+      height: 44px;
+      background: linear-gradient(90deg, var(--surface2) 25%, var(--surface) 50%, var(--surface2) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.4s infinite;
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+
+    @keyframes shimmer {
+      0%   { background-position: -200% 0; }
+      100% { background-position:  200% 0; }
+    }
+
+    /* ─── Stats Bar ─────────────────────────────────────────────── */
+    #statsBar {
+      display: none;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 16px;
+      margin-top: 24px;
+      animation: fadeIn .4s ease;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(99,102,241,.06), rgba(6,182,212,.06));
+      pointer-events: none;
+    }
+
+    .stat-value {
+      font-size: 2rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--accent1), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1.1;
+    }
+
+    .stat-label {
+      font-size: .75rem;
+      color: var(--muted);
+      font-weight: 600;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+      margin-top: 6px;
+    }
+
+    /* ─── Results Section ───────────────────────────────────────── */
+    #resultsSection {
+      display: none;
+      margin-top: 24px;
+      animation: fadeIn .4s ease;
+    }
+
+    .results-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .results-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 9px 18px;
+      border-radius: 9px;
+      border: none;
+      font-family: 'Inter', sans-serif;
+      font-size: .85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform var(--transition), box-shadow var(--transition),
+                  opacity var(--transition);
+    }
+
+    .btn:hover { transform: translateY(-1px); }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent1), var(--accent2));
+      color: #fff;
+      box-shadow: 0 3px 16px rgba(99,102,241,.3);
+    }
+
+    .btn-primary:hover { box-shadow: 0 6px 24px rgba(99,102,241,.45); }
+
+    .btn-secondary {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover { border-color: var(--accent1); }
+
+    /* Search bar */
+    #searchBar {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      padding: 11px 16px 11px 42px;
+      font-size: .9rem;
+      font-family: 'Inter', sans-serif;
+      outline: none;
+      transition: border-color var(--transition), box-shadow var(--transition);
+      margin-bottom: 16px;
+    }
+
+    #searchBar:focus {
+      border-color: var(--accent1);
+      box-shadow: 0 0 0 3px rgba(99,102,241,.2);
+    }
+
+    .search-wrapper { position: relative; }
+
+    .search-wrapper svg {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 16px;
+      height: 16px;
+      color: var(--muted);
+      pointer-events: none;
+    }
+
+    /* Table */
+    .table-wrap { overflow-x: auto; border-radius: var(--radius); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .875rem;
+    }
+
+    thead th {
+      background: var(--surface2);
+      color: var(--muted);
+      font-size: .75rem;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      padding: 12px 14px;
+      text-align: left;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    tbody tr {
+      border-bottom: 1px solid rgba(255,255,255,.04);
+      transition: background var(--transition);
+    }
+
+    tbody tr:hover { background: rgba(99,102,241,.06); }
+
+    tbody td {
+      padding: 12px 14px;
+      vertical-align: middle;
+    }
+
+    .customer-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: linear-gradient(135deg, rgba(99,102,241,.2), rgba(6,182,212,.2));
+      border: 1px solid rgba(99,102,241,.3);
+      border-radius: 50px;
+      padding: 4px 12px;
+      font-weight: 600;
+      font-size: .82rem;
+      cursor: pointer;
+      transition: background var(--transition), transform var(--transition);
+    }
+
+    .customer-pill:hover {
+      background: linear-gradient(135deg, rgba(99,102,241,.35), rgba(6,182,212,.35));
+      transform: scale(1.04);
+    }
+
+    .rows-badge {
+      background: rgba(16,185,129,.15);
+      color: var(--success);
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-size: .78rem;
+      font-weight: 700;
+    }
+
+    .dl-btn {
+      background: rgba(99,102,241,.15);
+      color: var(--accent1);
+      border: 1px solid rgba(99,102,241,.3);
+      border-radius: 7px;
+      padding: 6px 12px;
+      font-size: .8rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: 'Inter', sans-serif;
+      transition: background var(--transition), transform var(--transition);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .dl-btn:hover {
+      background: rgba(99,102,241,.3);
+      transform: scale(1.05);
+    }
+
+    /* Empty state */
+    #emptyState {
+      text-align: center;
+      padding: 60px 24px;
+    }
+
+    #emptyState .empty-icon {
+      width: 72px; height: 72px;
+      margin: 0 auto 20px;
+      background: linear-gradient(135deg, rgba(99,102,241,.15), rgba(6,182,212,.15));
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    #emptyState .empty-icon svg { width: 36px; height: 36px; color: var(--muted); }
+    #emptyState h3 { font-size: 1.1rem; color: var(--muted); font-weight: 500; }
+    #emptyState p  { font-size: .85rem; color: var(--muted); margin-top: 6px; opacity: .7; }
+
+    /* ─── Preview Modal ─────────────────────────────────────────── */
+    #modalOverlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.7);
+      backdrop-filter: blur(6px);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      animation: fadeIn .2s ease;
+    }
+
+    #modalOverlay.open { display: flex; }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      width: 100%;
+      max-width: 800px;
+      max-height: 80vh;
+      overflow-y: auto;
+      position: relative;
+      animation: slideUp .25s ease;
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(30px); opacity: 0; }
+      to   { transform: translateY(0);    opacity: 1; }
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+
+    .modal-title { font-size: 1.05rem; font-weight: 700; }
+
+    #modalClose {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      transition: color var(--transition);
+    }
+
+    #modalClose:hover { color: var(--text); }
+
+    .modal table th,
+    .modal table td { padding: 9px 12px; font-size: .8rem; }
+
+    /* ─── Toasts ────────────────────────────────────────────────── */
+    #toastContainer {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 200;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      pointer-events: none;
+    }
+
+    .toast {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 13px 18px;
+      border-radius: 10px;
+      font-size: .875rem;
+      font-weight: 600;
+      box-shadow: 0 8px 32px rgba(0,0,0,.4);
+      animation: slideInRight .3s ease forwards;
+      pointer-events: auto;
+      max-width: 320px;
+      border-left: 4px solid;
+    }
+
+    .toast.success {
+      background: rgba(16,185,129,.15);
+      border-color: var(--success);
+      color: #a7f3d0;
+      backdrop-filter: blur(10px);
+    }
+
+    .toast.error {
+      background: rgba(239,68,68,.15);
+      border-color: var(--error);
+      color: #fca5a5;
+      backdrop-filter: blur(10px);
+    }
+
+    .toast.info {
+      background: rgba(99,102,241,.15);
+      border-color: var(--accent1);
+      color: #c7d2fe;
+      backdrop-filter: blur(10px);
+    }
+
+    @keyframes slideInRight {
+      from { transform: translateX(100%); opacity: 0; }
+      to   { transform: translateX(0);    opacity: 1; }
+    }
+
+    @keyframes slideOutRight {
+      from { transform: translateX(0);    opacity: 1; }
+      to   { transform: translateX(110%); opacity: 0; }
+    }
+
+    /* ─── Utilities ─────────────────────────────────────────────── */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0);   }
+    }
+
+    .hidden { display: none !important; }
+
+    /* Mobile tweaks */
+    @media (max-width: 600px) {
+      .config-grid { grid-template-columns: 1fr; }
+      .results-header { flex-direction: column; align-items: flex-start; }
+      .results-actions { width: 100%; }
+      .results-actions .btn { flex: 1; justify-content: center; }
+      #statsBar { grid-template-columns: 1fr 1fr; }
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 99px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+  </style>
+</head>
+<body>
+
+<!-- ── Toast container ───────────────────────────────────────────────────── -->
+<div id="toastContainer"></div>
+
+<!-- ── Modal overlay ─────────────────────────────────────────────────────── -->
+<div id="modalOverlay" role="dialog" aria-modal="true">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="modalTitle">Preview</span>
+      <button id="modalClose" aria-label="Close preview">✕</button>
+    </div>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<!-- ── Main layout ────────────────────────────────────────────────────────── -->
+<div class="container">
+
+  <!-- Header -->
+  <header>
+    <div class="badge">✦ CSV Splitter Tool</div>
+    <h1>Split CSV by Customer</h1>
+    <p>Upload any CSV file, pick the Sales Order column, and download one file per customer — all in your browser, no data leaves your device.</p>
+  </header>
+
+  <!-- ── Upload Card ─────────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+      Upload File
+    </div>
+
+    <div id="dropZone" role="button" tabindex="0" aria-label="Upload CSV file">
+      <div class="upload-icon">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+      </div>
+      <h3>Drag &amp; drop your CSV here</h3>
+      <p>or <span id="browseLink">browse to select</span> &nbsp;·&nbsp; .csv files, UTF-8 / UTF-8 BOM</p>
+    </div>
+    <input type="file" id="fileInput" accept=".csv,text/csv" />
+
+    <div id="fileInfo">
+      <div class="info-item">
+        <span class="label">File:</span>
+        <span class="value" id="infoName">—</span>
+      </div>
+      <div class="info-item">
+        <span class="label">Size:</span>
+        <span class="value" id="infoSize">—</span>
+      </div>
+      <div class="info-item">
+        <span class="label">Rows:</span>
+        <span class="value" id="infoRows">—</span>
+      </div>
+      <div class="info-item">
+        <span class="label">Columns:</span>
+        <span class="value" id="infoCols">—</span>
+      </div>
+      <button id="clearBtn">✕ Clear</button>
+    </div>
+  </div>
+
+  <!-- ── Config Card ─────────────────────────────────────────────────────── -->
+  <div class="card" id="configCard">
+    <div class="card-title">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+      Configuration
+    </div>
+    <div class="config-grid">
+
+      <div class="form-group">
+        <label for="soColumn">Sales Order Column</label>
+        <select id="soColumn"><option value="">— select column —</option></select>
+      </div>
+
+      <div class="form-group">
+        <label for="dateColumn">Date Column</label>
+        <select id="dateColumn"><option value="">— select column —</option></select>
+      </div>
+
+      <div class="form-group">
+        <label for="separator">Separator Character</label>
+        <input type="text" id="separator" value="/" maxlength="5" placeholder="/" />
+      </div>
+
+      <div class="form-group">
+        <label>Output Format</label>
+        <div class="segment-control">
+          <input type="radio" name="format" id="fmtCsv" value="csv" checked />
+          <label for="fmtCsv">CSV</label>
+          <input type="radio" name="format" id="fmtXlsx" value="xlsx" />
+          <label for="fmtXlsx">Excel (.xlsx)</label>
+        </div>
+      </div>
+
+      <div class="form-group" id="summaryToggleGroup">
+        <label>Include Summary Sheet</label>
+        <div class="toggle-row">
+          <label class="toggle">
+            <input type="checkbox" id="summaryToggle" />
+            <span class="slider"></span>
+          </label>
+          <span class="toggle-label" id="summaryToggleLabel">Off — Excel only</span>
+        </div>
+      </div>
+
+    </div>
+
+    <button id="splitBtn" disabled>
+      ⚡ Split CSV
+    </button>
+
+    <!-- Progress -->
+    <div id="progressWrap">
+      <div class="progress-label">
+        <span id="progressText">Processing…</span>
+        <span id="progressPct">0%</span>
+      </div>
+      <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
+    </div>
+  </div>
+
+  <!-- ── Stats Bar ───────────────────────────────────────────────────────── -->
+  <div id="statsBar" style="display:none; margin-top:24px;">
+    <!-- dynamically rendered as grid -->
+  </div>
+
+  <!-- ── Results Section ────────────────────────────────────────────────── -->
+  <div id="resultsSection">
+    <div class="card">
+      <div class="results-header">
+        <div class="card-title" style="margin-bottom:0">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          Results
+        </div>
+        <div class="results-actions">
+          <button class="btn btn-secondary" id="exportSummaryBtn">
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            Export Summary CSV
+          </button>
+          <button class="btn btn-primary" id="downloadAllBtn">
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            Download All as ZIP
+          </button>
+        </div>
+      </div>
+
+      <!-- Search -->
+      <div class="search-wrapper">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+        <input type="text" id="searchBar" placeholder="Search customers…" autocomplete="off" />
+      </div>
+
+      <div class="table-wrap">
+        <table id="resultsTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Customer</th>
+              <th>File Name</th>
+              <th>Rows</th>
+              <th>Date Range</th>
+              <th>Unique Transactions</th>
+              <th>Download</th>
+            </tr>
+          </thead>
+          <tbody id="resultsBody"></tbody>
+        </table>
+      </div>
+      <div id="noResultsMsg" class="hidden" style="text-align:center;padding:24px;color:var(--muted);font-size:.875rem;">No customers match your search.</div>
+    </div>
+  </div>
+
+  <!-- ── Empty state ─────────────────────────────────────────────────────── -->
+  <div id="emptyState">
+    <div class="empty-icon">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+    </div>
+    <h3>No file loaded yet</h3>
+    <p>Upload a CSV above to get started</p>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+// ════════════════════════════════════════════════════════════════════════════
+//  State
+// ════════════════════════════════════════════════════════════════════════════
+let parsedData    = null;   // { meta, data }
+let splitResults  = [];     // array of customer result objects
+let filteredRows  = [];     // current display rows after search filter
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Helpers
+// ════════════════════════════════════════════════════════════════════════════
+function sanitizeFilename(name) {
+  return String(name)
+    .replace(/[\\/*?:"<>|]/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'unknown';
+}
+
+function extractCustomer(soValue, sep) {
+  const s = String(soValue || '').trim();
+  if (sep && s.includes(sep)) return s.split(sep)[0].trim();
+  return s;
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(2) + ' MB';
+}
+
+function parseDate(val) {
+  if (!val) return null;
+  const d = new Date(val);
+  return isNaN(d) ? null : d;
+}
+
+function fmtDate(d) {
+  if (!d) return '—';
+  return d.toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' });
+}
+
+function dateRange(rows, dateCol) {
+  if (!dateCol) return '—';
+  let mn = null, mx = null;
+  rows.forEach(r => {
+    const d = parseDate(r[dateCol]);
+    if (!d) return;
+    if (!mn || d < mn) mn = d;
+    if (!mx || d > mx) mx = d;
+  });
+  if (!mn) return '—';
+  return mn.toDateString() === mx.toDateString()
+    ? fmtDate(mn)
+    : fmtDate(mn) + ' — ' + fmtDate(mx);
+}
+
+// UTF-8 BOM + CSV string
+function rowsToData(rows, headers) {
+  const out = new Array(rows.length);
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const vals = new Array(headers.length);
+    for (let j = 0; j < headers.length; j++) vals[j] = row[headers[j]] ?? '';
+    out[i] = vals;
+  }
+  return out;
+}
+
+function toCSVBlob(rows, headers) {
+  const csv = Papa.unparse({ fields: headers, data: rowsToData(rows, headers) });
+  return new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 500);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Toast
+// ════════════════════════════════════════════════════════════════════════════
+function toast(message, type = 'info', duration = 3500) {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  const icons = { success:'✔', error:'✖', info:'ℹ' };
+  el.innerHTML = `<span>${icons[type] || 'ℹ'}</span><span>${message}</span>`;
+  document.getElementById('toastContainer').appendChild(el);
+  setTimeout(() => {
+    el.style.animation = 'slideOutRight .3s ease forwards';
+    setTimeout(() => el.remove(), 300);
+  }, duration);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Progress
+// ════════════════════════════════════════════════════════════════════════════
+function setProgress(pct, label) {
+  document.getElementById('progressBar').style.width = pct + '%';
+  document.getElementById('progressPct').textContent = pct + '%';
+  if (label) document.getElementById('progressText').textContent = label;
+}
+
+function showProgress(visible) {
+  document.getElementById('progressWrap').style.display = visible ? 'block' : 'none';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Animated counter
+// ════════════════════════════════════════════════════════════════════════════
+function animateCount(el, target, duration = 800) {
+  const start = performance.now();
+  const num = typeof target === 'number' ? target : parseInt(target, 10);
+  if (isNaN(num)) { el.textContent = target; return; }
+  const tick = (now) => {
+    const elapsed = now - start;
+    const progress = Math.min(elapsed / duration, 1);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    el.textContent = Math.round(eased * num).toLocaleString();
+    if (progress < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Upload / Parse
+// ════════════════════════════════════════════════════════════════════════════
+const dropZone  = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') fileInput.click(); });
+document.getElementById('browseLink').addEventListener('click', e => { e.stopPropagation(); fileInput.click(); });
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f) handleFile(f);
+});
+
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) handleFile(fileInput.files[0]);
+});
+
+document.getElementById('clearBtn').addEventListener('click', resetAll);
+
+function handleFile(file) {
+  if (!file.name.toLowerCase().endsWith('.csv')) {
+    toast('Please upload a .csv file', 'error'); return;
+  }
+
+  // Show skeleton
+  document.getElementById('emptyState').classList.add('hidden');
+  document.getElementById('fileInfo').style.display = 'flex';
+  document.getElementById('infoName').textContent = file.name;
+  document.getElementById('infoSize').textContent = formatBytes(file.size);
+  document.getElementById('infoRows').textContent = '…';
+  document.getElementById('infoCols').textContent = '…';
+
+  Papa.parse(file, {
+    header: true,
+    skipEmptyLines: true,
+    encoding: 'UTF-8',
+    complete: (results) => {
+      parsedData = results;
+      const rows = results.data;
+      const headers = results.meta.fields || [];
+
+      document.getElementById('infoRows').textContent = rows.length.toLocaleString();
+      document.getElementById('infoCols').textContent = headers.length;
+
+      populateColumnDropdowns(headers);
+      document.getElementById('splitBtn').disabled = false;
+      toast(`Loaded ${rows.length.toLocaleString()} rows from "${file.name}"`, 'success');
+    },
+    error: (err) => {
+      toast('Failed to parse file: ' + err.message, 'error');
+    }
+  });
+}
+
+function populateColumnDropdowns(headers) {
+  const soSel   = document.getElementById('soColumn');
+  const dateSel = document.getElementById('dateColumn');
+
+  [soSel, dateSel].forEach(sel => {
+    sel.innerHTML = '<option value="">— select column —</option>';
+    headers.forEach(h => {
+      const opt = document.createElement('option');
+      opt.value = opt.textContent = h;
+      sel.appendChild(opt);
+    });
+  });
+
+  // Auto-select
+  const soAuto = headers.find(h => /sales.?order/i.test(h));
+  if (soAuto) soSel.value = soAuto;
+
+  const dateAuto = headers.find(h => /date/i.test(h));
+  if (dateAuto) dateSel.value = dateAuto;
+}
+
+function resetAll() {
+  parsedData   = null;
+  splitResults = [];
+  filteredRows = [];
+  fileInput.value = '';
+
+  document.getElementById('fileInfo').style.display = 'none';
+  document.getElementById('emptyState').classList.remove('hidden');
+  document.getElementById('splitBtn').disabled = true;
+  document.getElementById('soColumn').innerHTML   = '<option value="">— select column —</option>';
+  document.getElementById('dateColumn').innerHTML = '<option value="">— select column —</option>';
+  document.getElementById('resultsSection').style.display = 'none';
+
+  const statsBar = document.getElementById('statsBar');
+  statsBar.style.display = 'none';
+  statsBar.innerHTML = '';
+
+  showProgress(false);
+  toast('Cleared', 'info', 1800);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Summary toggle label
+// ════════════════════════════════════════════════════════════════════════════
+document.querySelectorAll('input[name="format"]').forEach(r => {
+  r.addEventListener('change', updateSummaryToggleLabel);
+});
+document.getElementById('summaryToggle').addEventListener('change', updateSummaryToggleLabel);
+
+function updateSummaryToggleLabel() {
+  const isXlsx  = document.getElementById('fmtXlsx').checked;
+  const enabled = document.getElementById('summaryToggle').checked;
+  const lbl = document.getElementById('summaryToggleLabel');
+  if (!isXlsx) {
+    lbl.textContent = 'Off — Excel only';
+  } else {
+    lbl.textContent = enabled ? 'On — summary sheet included' : 'Off';
+  }
+  document.getElementById('summaryToggle').disabled = !isXlsx;
+}
+updateSummaryToggleLabel();
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Split
+// ════════════════════════════════════════════════════════════════════════════
+document.getElementById('splitBtn').addEventListener('click', runSplit);
+
+async function runSplit() {
+  if (!parsedData) { toast('No file loaded', 'error'); return; }
+
+  const soCol   = document.getElementById('soColumn').value;
+  const dateCol = document.getElementById('dateColumn').value;
+  const sep     = document.getElementById('separator').value || '/';
+  const format  = document.querySelector('input[name="format"]:checked').value;
+
+  if (!soCol) { toast('Please select the Sales Order column', 'error'); return; }
+
+  const rows    = parsedData.data;
+  const headers = parsedData.meta.fields || [];
+
+  // Show progress
+  showProgress(true);
+  setProgress(0, 'Grouping rows…');
+  document.getElementById('splitBtn').disabled = true;
+
+  // Show skeleton in results
+  document.getElementById('resultsSection').style.display = 'block';
+  const tbody = document.getElementById('resultsBody');
+  tbody.innerHTML = [1,2,3,4].map(() =>
+    `<tr><td colspan="7"><div class="skeleton-row"></div></td></tr>`
+  ).join('');
+
+  // yield to browser
+  await delay(20);
+
+  // ── Group rows by customer ───────────────────────────────────────────────
+  const groups = {};
+  rows.forEach(row => {
+    const customer = extractCustomer(row[soCol], sep) || 'UNKNOWN';
+    if (!groups[customer]) groups[customer] = [];
+    groups[customer].push(row);
+  });
+
+  setProgress(30, 'Building results…');
+  await delay(20);
+
+  const customers = Object.keys(groups).sort();
+  splitResults = customers.map(c => {
+    const cRows   = groups[c];
+    const dr      = dateRange(cRows, dateCol);
+    const txField = parsedData.meta.fields.find(f => /transaction/i.test(f));
+    const uniqueTx = txField
+      ? new Set(cRows.map(r => r[txField])).size
+      : 0;
+    const ext  = format === 'xlsx' ? 'xlsx' : 'csv';
+    const fname = `${sanitizeFilename(c)}.${ext}`;
+    return { customer: c, rows: cRows, headers, dateRange: dr, uniqueTx, fileName: fname, format };
+  });
+
+  setProgress(60, 'Rendering table…');
+  await delay(20);
+
+  filteredRows = [...splitResults];
+  renderTable(filteredRows);
+
+  setProgress(80, 'Computing stats…');
+  await delay(20);
+
+  renderStats(rows, customers, dateCol, parsedData.meta.fields);
+
+  setProgress(100, 'Done!');
+  await delay(300);
+  showProgress(false);
+
+  document.getElementById('splitBtn').disabled = false;
+  document.getElementById('emptyState').classList.add('hidden');
+
+  // Scroll to results
+  document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  toast(`Split into ${customers.length} customer file(s)`, 'success');
+}
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Render table
+// ════════════════════════════════════════════════════════════════════════════
+function renderTable(results) {
+  const tbody = document.getElementById('resultsBody');
+  const noMsg = document.getElementById('noResultsMsg');
+
+  if (!results.length) {
+    tbody.innerHTML = '';
+    noMsg.classList.remove('hidden');
+    return;
+  }
+  noMsg.classList.add('hidden');
+
+  tbody.innerHTML = results.map((r, i) => `
+    <tr>
+      <td style="color:var(--muted);font-size:.8rem">${i + 1}</td>
+      <td>
+        <span class="customer-pill" data-idx="${splitResults.indexOf(r)}" title="Click to preview first 5 rows">
+          👤 ${escHtml(r.customer)}
+        </span>
+      </td>
+      <td style="font-family:monospace;font-size:.8rem;color:var(--muted)">${escHtml(r.fileName)}</td>
+      <td><span class="rows-badge">${r.rows.length.toLocaleString()}</span></td>
+      <td style="font-size:.82rem;color:var(--muted)">${escHtml(r.dateRange)}</td>
+      <td style="text-align:center">${r.uniqueTx ?? '—'}</td>
+      <td>
+        <button class="dl-btn" data-idx="${splitResults.indexOf(r)}">
+          ⬇ Download
+        </button>
+      </td>
+    </tr>`).join('');
+
+  // Attach events
+  tbody.querySelectorAll('.customer-pill').forEach(el =>
+    el.addEventListener('click', () => openPreview(+el.dataset.idx))
+  );
+  tbody.querySelectorAll('.dl-btn').forEach(el =>
+    el.addEventListener('click', () => downloadResult(+el.dataset.idx))
+  );
+}
+
+function escHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Stats Bar
+// ════════════════════════════════════════════════════════════════════════════
+function renderStats(rows, customers, dateCol, fields) {
+  const bar = document.getElementById('statsBar');
+
+  const dr  = dateRange(rows, dateCol);
+  const txField = fields && fields.find(f => /transaction/i.test(f));
+  const uniqTx  = txField ? new Set(rows.map(r => r[txField])).size : 0;
+
+  const stats = [
+    { label: 'Total Rows',          value: rows.length },
+    { label: 'Customers Found',     value: customers.length },
+    { label: 'Date Range',          value: dr, raw: true },
+    { label: 'Unique Transactions', value: uniqTx },
+  ];
+
+  bar.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:16px;margin-top:24px;';
+  bar.innerHTML = stats.map(s => `
+    <div class="stat-card">
+      <div class="stat-value" ${!s.raw ? `data-target="${s.value}"` : ''}>${s.raw ? escHtml(String(s.value)) : 0}</div>
+      <div class="stat-label">${escHtml(s.label)}</div>
+    </div>`).join('');
+
+  bar.querySelectorAll('[data-target]').forEach(el =>
+    animateCount(el, +el.dataset.target)
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Search / Filter
+// ════════════════════════════════════════════════════════════════════════════
+document.getElementById('searchBar').addEventListener('input', function () {
+  const q = this.value.toLowerCase().trim();
+  filteredRows = q
+    ? splitResults.filter(r => r.customer.toLowerCase().includes(q))
+    : [...splitResults];
+  renderTable(filteredRows);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Download single
+// ════════════════════════════════════════════════════════════════════════════
+function downloadResult(idx) {
+  const r = splitResults[idx];
+  if (!r) return;
+  if (r.format === 'xlsx') {
+    downloadXlsx(r);
+  } else {
+    downloadBlob(toCSVBlob(r.rows, r.headers), r.fileName);
+  }
+  toast(`Downloading ${r.fileName}`, 'success', 2000);
+}
+
+function downloadXlsx(r) {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(r.rows, { header: r.headers });
+  XLSX.utils.book_append_sheet(wb, ws, 'Data');
+
+  const addSummary = document.getElementById('summaryToggle').checked;
+  if (addSummary) {
+    const sumData = splitResults.map(s => ({
+      Customer: s.customer,
+      Rows: s.rows.length,
+      'Date Range': s.dateRange,
+      'Unique Transactions': s.uniqueTx,
+      'File Name': s.fileName
+    }));
+    const sumSheet = XLSX.utils.json_to_sheet(sumData);
+    XLSX.utils.book_append_sheet(wb, sumSheet, 'Summary');
+  }
+  XLSX.writeFile(wb, r.fileName);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Download All as ZIP
+// ════════════════════════════════════════════════════════════════════════════
+document.getElementById('downloadAllBtn').addEventListener('click', async function () {
+  if (!splitResults.length) { toast('Nothing to download', 'error'); return; }
+
+  this.disabled = true;
+  this.textContent = '⏳ Zipping…';
+  toast('Building ZIP…', 'info', 2000);
+
+  const zip = new JSZip();
+
+  for (const r of splitResults) {
+    if (r.format === 'xlsx') {
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(r.rows, { header: r.headers });
+      XLSX.utils.book_append_sheet(wb, ws, 'Data');
+      const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      zip.file(r.fileName, buf);
+    } else {
+      const csv = Papa.unparse({ fields: r.headers, data: rowsToData(r.rows, r.headers) });
+      zip.file(r.fileName, '\uFEFF' + csv);
+    }
+  }
+
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+  downloadBlob(blob, 'split_customers.zip');
+  toast(`ZIP with ${splitResults.length} files ready!`, 'success');
+
+  this.disabled = false;
+  this.innerHTML = '<svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg> Download All as ZIP';
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Export Summary CSV
+// ════════════════════════════════════════════════════════════════════════════
+document.getElementById('exportSummaryBtn').addEventListener('click', function () {
+  if (!splitResults.length) { toast('Nothing to export', 'error'); return; }
+
+  const headers = ['Customer', 'File Name', 'Rows', 'Date Range', 'Unique Transactions'];
+  const rows = splitResults.map(r => ({
+    Customer: r.customer,
+    'File Name': r.fileName,
+    Rows: r.rows.length,
+    'Date Range': r.dateRange,
+    'Unique Transactions': r.uniqueTx
+  }));
+  downloadBlob(toCSVBlob(rows, headers), 'summary.csv');
+  toast('Summary CSV exported', 'success', 2000);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Preview Modal
+// ════════════════════════════════════════════════════════════════════════════
+function openPreview(idx) {
+  const r = splitResults[idx];
+  if (!r) return;
+
+  const preview = r.rows.slice(0, 5);
+  document.getElementById('modalTitle').textContent = `Preview: ${r.customer} (first ${preview.length} of ${r.rows.length} rows)`;
+
+  const th = r.headers.map(h => `<th>${escHtml(h)}</th>`).join('');
+  const bodyRows = preview.map(row =>
+    `<tr>${r.headers.map(h => `<td>${escHtml(String(row[h] ?? ''))}</td>`).join('')}</tr>`
+  ).join('');
+
+  document.getElementById('modalBody').innerHTML = `
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr>${th}</tr></thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
+    </div>`;
+
+  document.getElementById('modalOverlay').classList.add('open');
+}
+
+document.getElementById('modalClose').addEventListener('click', closeModal);
+document.getElementById('modalOverlay').addEventListener('click', function (e) {
+  if (e.target === this) closeModal();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('open');
+}
+</script>
+</body>
+</html>
