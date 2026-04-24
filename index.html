@@ -950,11 +950,11 @@
             <tr>
               <th>#</th>
               <th>Customer</th>
-              <th>Transaction #</th>
               <th>File Name</th>
               <th>Rows</th>
+              <th>Transactions</th>
+              <th>SO Numbers</th>
               <th>Date Range</th>
-              <th>Unique Transactions</th>
               <th>Download</th>
             </tr>
           </thead>
@@ -1266,64 +1266,41 @@ async function runSplit() {
   // yield to browser
   await delay(20);
 
-  // ── Group rows by the original (Date + Transaction Number + Sales Order Number)
-  //    composite key — matches the original Python script's splitting logic so
-  //    each unique combination becomes its own output file.
+  // ── Group rows by customer prefix only ───────────────────────────────────
+  //    The customer prefix is everything before the configured separator in
+  //    the Sales Order Number column (e.g. "SALAMJED/73395" → "SALAMJED").
+  //    All rows sharing a prefix land in a single output file, regardless of
+  //    transaction number or SO suffix.
   const groups = {};
   rows.forEach(row => {
     const customer = extractCustomer(row[soCol], sep) || 'UNKNOWN';
-    const dateVal  = dateCol ? String(row[dateCol] ?? '').trim() : '';
-    const txVal    = txCol   ? String(row[txCol]   ?? '').trim() : '';
-    const soVal    = String(row[soCol] ?? '').trim();
-    const key      = `${dateVal}\u0001${txVal}\u0001${soVal}`;
-    if (!groups[key]) groups[key] = { customer, dateVal, txVal, soVal, rows: [] };
-    groups[key].rows.push(row);
+    if (!groups[customer]) groups[customer] = [];
+    groups[customer].push(row);
   });
 
   setProgress(30, 'Building results…');
   await delay(20);
 
-  // Sort groups for stable, human-friendly ordering: customer → date → txn → SO
-  const keys = Object.keys(groups).sort((a, b) => {
-    const ga = groups[a], gb = groups[b];
-    return ga.customer.localeCompare(gb.customer)
-        || ga.dateVal.localeCompare(gb.dateVal)
-        || ga.txVal.localeCompare(gb.txVal)
-        || ga.soVal.localeCompare(gb.soVal);
-  });
-  const customers = [...new Set(keys.map(k => groups[k].customer))];
+  const customers = Object.keys(groups).sort();
 
-  // Track used file names so we can disambiguate any that would otherwise
-  // collide (e.g. when a transaction or SO field is empty in the source data).
-  const usedNames = new Set();
-  splitResults = keys.map(k => {
-    const g       = groups[k];
-    const dr      = dateRange(g.rows, dateCol);
+  splitResults = customers.map(c => {
+    const cRows   = groups[c];
+    const dr      = dateRange(cRows, dateCol);
     const uniqueTx = txCol
-      ? new Set(g.rows.map(r => r[txCol])).size
+      ? new Set(cRows.map(r => String(r[txCol] ?? '').trim()).filter(v => v !== '')).size
       : 0;
-    const ext  = format === 'xlsx' ? 'xlsx' : 'csv';
-    // Build a unique, human-readable file name from the grouping key parts so
-    // each (date, txn, SO) combination ends up in its own file. Empty parts are
-    // preserved (as the sanitizer's "unknown" placeholder) and any remaining
-    // collisions get a numeric suffix.
-    const parts = [g.customer, g.txVal, g.soVal].map(sanitizeFilename);
-    const base  = parts.join('_');
-    let fname = `${base}.${ext}`;
-    if (usedNames.has(fname)) {
-      let i = 2;
-      while (usedNames.has(`${base}_${i}.${ext}`)) i++;
-      fname = `${base}_${i}.${ext}`;
-    }
-    usedNames.add(fname);
+    const uniqueSO = new Set(
+      cRows.map(r => String(r[soCol] ?? '').trim()).filter(v => v !== '')
+    ).size;
+    const ext   = format === 'xlsx' ? 'xlsx' : 'csv';
+    const fname = `${sanitizeFilename(c)}.${ext}`;
     return {
-      customer: g.customer,
-      txNumber: g.txVal,
-      soNumber: g.soVal,
-      rows: g.rows,
+      customer: c,
+      rows: cRows,
       headers,
       dateRange: dr,
       uniqueTx,
+      uniqueSO,
       fileName: fname,
       format
     };
@@ -1349,7 +1326,7 @@ async function runSplit() {
 
   // Scroll to results
   document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  toast(`Split into ${splitResults.length} file(s) across ${customers.length} customer(s)`, 'success');
+  toast(`Split into ${customers.length} customer file(s)`, 'success');
 }
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -1376,11 +1353,11 @@ function renderTable(results) {
           👤 ${escHtml(r.customer)}
         </span>
       </td>
-      <td style="font-family:monospace;font-size:.8rem">${escHtml(r.txNumber || '—')}</td>
       <td style="font-family:monospace;font-size:.8rem;color:var(--muted)">${escHtml(r.fileName)}</td>
       <td><span class="rows-badge">${r.rows.length.toLocaleString()}</span></td>
-      <td style="font-size:.82rem;color:var(--muted)">${escHtml(r.dateRange)}</td>
       <td style="text-align:center">${r.uniqueTx ?? '—'}</td>
+      <td style="text-align:center">${r.uniqueSO ?? '—'}</td>
+      <td style="font-size:.82rem;color:var(--muted)">${escHtml(r.dateRange)}</td>
       <td>
         <button class="dl-btn" data-idx="${splitResults.indexOf(r)}">
           ⬇ Download
@@ -1442,11 +1419,7 @@ function renderStats(rows, customers, dateCol, txCol, fields) {
 document.getElementById('searchBar').addEventListener('input', function () {
   const q = this.value.toLowerCase().trim();
   filteredRows = q
-    ? splitResults.filter(r =>
-        r.customer.toLowerCase().includes(q)
-        || (r.txNumber || '').toLowerCase().includes(q)
-        || (r.soNumber || '').toLowerCase().includes(q)
-      )
+    ? splitResults.filter(r => r.customer.toLowerCase().includes(q))
     : [...splitResults];
   renderTable(filteredRows);
 });
@@ -1474,11 +1447,10 @@ function downloadXlsx(r) {
   if (addSummary) {
     const sumData = splitResults.map(s => ({
       Customer: s.customer,
-      'Transaction #': s.txNumber,
-      'Sales Order #': s.soNumber,
       Rows: s.rows.length,
+      Transactions: s.uniqueTx,
+      'SO Numbers': s.uniqueSO,
       'Date Range': s.dateRange,
-      'Unique Transactions': s.uniqueTx,
       'File Name': s.fileName
     }));
     const sumSheet = XLSX.utils.json_to_sheet(sumData);
@@ -1526,15 +1498,14 @@ document.getElementById('downloadAllBtn').addEventListener('click', async functi
 document.getElementById('exportSummaryBtn').addEventListener('click', function () {
   if (!splitResults.length) { toast('Nothing to export', 'error'); return; }
 
-  const headers = ['Customer', 'Transaction #', 'Sales Order #', 'File Name', 'Rows', 'Date Range', 'Unique Transactions'];
+  const headers = ['Customer', 'File Name', 'Rows', 'Transactions', 'SO Numbers', 'Date Range'];
   const rows = splitResults.map(r => ({
     Customer: r.customer,
-    'Transaction #': r.txNumber,
-    'Sales Order #': r.soNumber,
     'File Name': r.fileName,
     Rows: r.rows.length,
-    'Date Range': r.dateRange,
-    'Unique Transactions': r.uniqueTx
+    Transactions: r.uniqueTx,
+    'SO Numbers': r.uniqueSO,
+    'Date Range': r.dateRange
   }));
   downloadBlob(toCSVBlob(rows, headers), 'summary.csv');
   toast('Summary CSV exported', 'success', 2000);
